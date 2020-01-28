@@ -1,0 +1,241 @@
+#include "BVH.h"
+
+
+//this function will take in the min and max values and index of a (must be random selection) triangle from an array and insert it into the BVH tree. Giving it a AABB.
+void BVH::build_insertion(XMFLOAT3 _min, XMFLOAT3 _max, int _index)
+{	
+	//load in the info into new temporary node
+	node* temp = new node;
+	temp->ab.max = _max;
+	temp->ab.min = _min;
+	temp->index = _index;
+	//fill in temps aabb info
+	build_aabb(temp);
+
+	//make an iterator to iterate through the tree and set it to the root
+	node* iter;
+	iter = root;
+
+	if (root == nullptr)
+	{
+		root = temp;
+		return;
+	}
+	while (true)
+	{
+		//if the current node is a leaf, make a new node and umbrella temp and current node under it
+		if (iter->left == nullptr && iter->right == nullptr)
+		{		
+			node* leaf = new node;
+			leaf->ab = iter->ab;
+			leaf->index = iter->index;			
+			iter->left = leaf;
+			iter->right = temp;
+			iter->index = -1;
+			
+			//check/get the min and max values of temp and iter and set those to branch's min and max
+			XMFLOAT3 min = get_new_min(temp->ab.min, iter->ab.min);
+			XMFLOAT3 max = get_new_max(temp->ab.max, iter->ab.max);
+			iter->ab.min = min;
+			iter->ab.max = max;
+			build_aabb(iter);
+			return;		
+		}
+		//if the current node is not a leaf, distance check between left and right and iterates to the closer of the two
+		else
+		{
+			//resize the branches min and max if needed, checking against temps min and max
+			XMFLOAT3 min = get_new_min(temp->ab.min, iter->ab.min);
+			XMFLOAT3 max = get_new_max(temp->ab.max, iter->ab.max);
+			iter->ab.min = min;
+			iter->ab.max = max;
+			build_aabb(iter);	
+
+			float left = abs(iter->left->ab.center_pos.x - temp->ab.center_pos.x) + abs(iter->left->ab.center_pos.y - temp->ab.center_pos.y) + abs(iter->left->ab.center_pos.z - temp->ab.center_pos.z);
+			float right = abs(iter->right->ab.center_pos.x - temp->ab.center_pos.x) + abs(iter->right->ab.center_pos.y - temp->ab.center_pos.y) + abs(iter->right->ab.center_pos.z - temp->ab.center_pos.z);
+			
+			if (left < right)
+			{
+				//go left
+				iter = iter->left;
+			}
+			else
+				//go right
+				iter = iter->right;			
+		}
+	}
+}
+
+void BVH::traverse_bvh(end::aabb _ab, std::vector<end::aabb>& _v)
+{
+	node* iter;
+	iter = root;
+	if (check_collision(_ab, iter))
+	{
+		traverse_bvh(_ab, _v, iter);
+		_v.push_back(iter->ab);
+	}
+}
+
+bool BVH::check_collision(end::aabb _ab, node* _node)
+{
+	
+	//check collision against aabb of temp
+	if (_ab.max.x < _node->ab.min.x || _ab.min.x >_node->ab.max.x) return false;
+	if (_ab.max.y < _node->ab.min.y || _ab.min.y >_node->ab.max.y) return false;
+	if (_ab.max.z < _node->ab.min.z || _ab.min.z >_node->ab.max.z) return false;
+	return true;
+	
+}
+
+//takes in a pointer to a node and fills out its aabb info according to the min and max values
+void BVH::build_aabb(node* _node)
+{
+	_node->ab.points[0] = _node->ab.max; //back top right
+	_node->ab.points[1] = { _node->ab.max.x, _node->ab.min.y, _node->ab.max.z }; //back bottom right
+	_node->ab.points[2] = { _node->ab.min.x, _node->ab.min.y, _node->ab.max.z }; //back bottom left
+	_node->ab.points[3] = { _node->ab.min.x, _node->ab.max.y, _node->ab.max.z }; //back top left
+	_node->ab.points[4] = { _node->ab.max.x, _node->ab.max.y, _node->ab.min.z }; //front top right
+	_node->ab.points[5] = { _node->ab.max.x, _node->ab.min.y, _node->ab.min.z }; //front bottom right
+	_node->ab.points[6] = { _node->ab.min.x, _node->ab.min.y, _node->ab.min.z }; //front bottom left
+	_node->ab.points[7] = { _node->ab.min.x, _node->ab.max.y, _node->ab.min.z }; //front top left 
+	//aabb position
+	XMVECTOR pos = { 0,0,0 };
+	for (int i = 0; i < 8; ++i)
+		pos = XMVectorAdd(pos, (XMVECTOR&)_node->ab.points[i]);
+	pos = XMVectorDivide(pos, { 8,8,8 });
+	XMStoreFloat3(&_node->ab.center_pos, pos);
+	//aabb extents
+	_node->ab.extents = XMVectorSubtract((XMVECTOR&)_node->ab.max, pos);
+}
+
+XMFLOAT3 BVH::get_new_min(XMFLOAT3 _a, XMFLOAT3 _b)
+{
+	XMFLOAT3 new_min;
+	if (_a.x < _b.x)
+		new_min.x = _a.x;
+	else
+		new_min.x = _b.x;
+	if (_a.y < _b.y)
+		new_min.y = _a.y;
+	else
+		new_min.y = _b.y;
+	if (_a.z < _b.z)
+		new_min.z = _a.z;
+	else
+		new_min.z = _b.z;
+	return new_min;
+}
+
+XMFLOAT3 BVH::get_new_max(XMFLOAT3 _a, XMFLOAT3 _b)
+{
+	XMFLOAT3 new_max;
+	if (_a.x > _b.x)
+		new_max.x = _a.x;
+	else
+		new_max.x = _b.x;
+	if (_a.y > _b.y)
+		new_max.y = _a.y;
+	else
+		new_max.y = _b.y;
+	if (_a.z > _b.z)
+		new_max.z = _a.z;
+	else
+		new_max.z = _b.z;
+	return new_max;
+}
+
+void BVH::post_order(const node*_node)
+{
+	if (_node != nullptr)
+	{
+		post_order(_node->left);
+		post_order(_node->right);
+		delete _node;
+	}
+}
+
+void BVH::clear()
+{
+	node* n;
+	n = root;
+	post_order(n);
+	root = nullptr;
+}
+
+void BVH::traverse_bvh(end::aabb _ab, std::vector<end::aabb>& _v, node* _node)
+{
+	if (_node)
+	{
+		if (_node->left != nullptr)
+		{
+			if (check_collision(_ab, _node->left))
+			{
+				traverse_bvh(_ab, _v, _node->left);
+				_v.push_back(_node->left->ab);
+			}
+		}
+
+		if (_node->right != nullptr)
+		{
+			if (check_collision(_ab, _node->right))
+			{
+				traverse_bvh(_ab, _v, _node->right);
+				_v.push_back(_node->right->ab);
+			}
+		}
+	}
+}
+
+#pragma once
+#include <DirectXMath.h>
+#include <vector>
+
+using namespace DirectX;
+
+namespace end 
+{
+	struct aabb
+	{
+		XMFLOAT3 center_pos;
+		XMFLOAT4 collide_color = { 1.0f,0.0f,1.0f,1.0f };
+		XMFLOAT3 points[8];
+		XMVECTOR extents;
+		bool is_colliding = false;
+		XMFLOAT3 min;
+		XMFLOAT3 max;
+	};
+}
+
+	class BVH
+	{
+		
+
+		struct node
+		{
+			end::aabb ab;
+			node* left = nullptr;
+			node* right = nullptr;	
+			int index;
+		};
+
+		node* root;
+
+	public:
+		BVH() { root = nullptr; }
+		~BVH() { clear(); }		
+		void build_insertion(XMFLOAT3 _min, XMFLOAT3 _max, int _index);
+		void traverse_bvh(end::aabb _ab, std::vector<end::aabb>& _v);			
+		XMFLOAT3 get_new_min(XMFLOAT3 _a, XMFLOAT3 _b);
+		XMFLOAT3 get_new_max(XMFLOAT3 _a, XMFLOAT3 _b);
+		void post_order(const node* _node);		
+		void clear();
+
+	private:
+		void traverse_bvh(end::aabb _ab, std::vector<end::aabb>& _v, node* _node);
+		bool check_collision(end::aabb _ab, node* _node);
+		void build_aabb(node* _node);
+		//bool (*p_collide)(end::aabb) = &check_collision;
+	};	
+	
+	

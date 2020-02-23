@@ -1,0 +1,121 @@
+//here i am using two unsorted maps with hexagon tile structs to path plan
+
+void PathSearch::enter(int startRow, int startColumn, int goalRow, int goalColumn)
+	{
+		done = false;
+
+		for (auto iter = nodes.begin(); iter != nodes.end(); ++iter)
+		{
+			if (iter->second != nullptr)
+			{
+				if (iter->first->getRow() == goalRow && iter->first->getColumn() == goalColumn)
+				{
+					iter->second->tile->setFill(0xFF00FF00);
+					end_tile = iter->second;
+				}
+			}
+			
+		}
+
+		for (auto iter = nodes.begin(); iter != nodes.end(); ++iter)
+		{
+			if (iter->second != nullptr)
+			{
+				if (iter->first->getRow() == startRow && iter->first->getColumn() == startColumn)
+				{
+					iter->second->tile->setFill(0xFFFF0000);
+					start_tile = iter->second;										
+				}
+			}			
+		}
+		PlannerNode* n = new PlannerNode;
+		n->searchNode = start_tile;
+		n->parent = nullptr;
+		n->h_cost = DistanceCheck(n->searchNode->tile->getXCoordinate(),
+					n->searchNode->tile->getYCoordinate(), 
+					end_tile->tile->getXCoordinate(), 
+					end_tile->tile->getYCoordinate());
+		n->f_cost = n->searchNode->tile->getWeight() + n->h_cost * heuristic_scale;
+		n->g_cost = 0;
+		p_q.push(n);
+		visited[n->searchNode] = n;
+	}
+
+	void PathSearch::update(long timeslice)
+	{
+		while (!p_q.empty())
+		{
+			PlannerNode* p_node = p_q.front();
+			p_q.pop();
+
+			if (p_node->searchNode->tile == end_tile->tile)
+			{
+				//build solution list and exit
+				done = true;
+				//recursive function that returns the optimal path in a vector
+				fill_solution_vector(p_node);
+				return;
+			}
+
+				for (int i = 0; i < p_node->searchNode->neighbors.size(); ++i)
+				{
+					bool found = false;
+					for (auto iter = visited.begin(); iter != visited.end(); ++iter)
+					{
+						if (iter->second != nullptr)
+						{
+							if (p_node->searchNode->neighbors[i]->tile == iter->first->tile)
+							{
+								float g = DistanceCheck(p_node->searchNode->neighbors[i]->tile->getXCoordinate(), 
+										  p_node->searchNode->neighbors[i]->tile->getYCoordinate(), 
+										  p_node->searchNode->tile->getXCoordinate(), 
+										  p_node->searchNode->tile->getYCoordinate()) * p_node->searchNode->neighbors[i]->tile->getWeight() + p_node->g_cost;
+								
+								float f = g + iter->second->h_cost * heuristic_scale;
+								if (f < iter->second->f_cost)
+								{
+									p_q.remove(iter->second);
+									iter->second->f_cost = f;
+									iter->second->g_cost = g;
+									iter->second->parent = p_node;								
+									p_q.push(iter->second);
+								}
+								
+								found = true;
+								break;
+							}
+						}
+
+					}
+
+					if (found)
+						continue;
+
+					PlannerNode* neighbor = new PlannerNode;
+					neighbor->parent = p_node;
+
+					for (auto iter = nodes.begin(); iter != nodes.end(); ++iter)
+					{
+						if (iter->second != nullptr)
+						{
+							if (iter->first == p_node->searchNode->neighbors[i]->tile)
+							{
+								neighbor->searchNode = iter->second;
+							}
+						}
+					}
+					
+					neighbor->g_cost = DistanceCheck(neighbor->searchNode->tile->getXCoordinate(), neighbor->searchNode->tile->getYCoordinate(), p_node->searchNode->tile->getXCoordinate(), p_node->searchNode->tile->getYCoordinate())*neighbor->searchNode->tile->getWeight() + p_node->g_cost;
+					neighbor->h_cost = DistanceCheck(neighbor->searchNode->tile->getXCoordinate(), neighbor->searchNode->tile->getYCoordinate(), end_tile->tile->getXCoordinate(), end_tile->tile->getYCoordinate());
+					neighbor->f_cost = neighbor->g_cost + neighbor->h_cost * heuristic_scale;
+					nodes[neighbor->searchNode->tile]->tile->setFill(0xFF0000FF);
+					visited[neighbor->searchNode] = neighbor;
+					p_q.push(neighbor);
+				}
+			
+			if (timeslice == 0)
+				return;
+		}
+		return;
+		
+	}

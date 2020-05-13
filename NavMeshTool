@@ -1,0 +1,531 @@
+#include <fbxsdk.h>
+#include <fstream>
+#include <vector>
+#include <string>
+#include <DirectXMath.h>
+#include <iostream>
+namespace geometry
+{
+	
+
+	struct Vertex
+	{
+		Vertex() {}
+		Vertex(float x, float y, float z)
+			: pos(x, y, z){}
+
+		DirectX::XMFLOAT3 pos;
+	};
+
+	struct Triangle
+	{
+		Vertex v1;
+		Vertex v2;
+		Vertex v3;
+
+		DirectX::XMFLOAT3 centroid;
+		DirectX::XMFLOAT3 min;
+		DirectX::XMFLOAT3 max;
+	};
+
+	struct Cell
+	{
+		Triangle tri;
+		std::vector<int> connections;
+	};
+}
+
+class FbxLoader
+{
+public:
+
+	FbxScene* LoadFileIntoScene(const char* filename)
+	{
+		// Initialize the SDK manager. This object handles memory management.
+		FbxManager* lSdkManager = FbxManager::Create();
+		// Create the IO settings object.
+		FbxIOSettings* ios = FbxIOSettings::Create(lSdkManager, IOSROOT);
+		lSdkManager->SetIOSettings(ios);
+
+		// Create an importer using the SDK manager.
+		FbxImporter* lImporter = FbxImporter::Create(lSdkManager, "");
+
+		// Use the first argument as the filename for the importer.
+		if (!lImporter->Initialize(filename, -1, lSdkManager->GetIOSettings())) {
+			printf("Call to FbxImporter::Initialize() failed.\n");
+			printf("Error returned: %s\n\n", lImporter->GetStatus().GetErrorString());
+			exit(-1);
+		}
+		// Create a new scene so that it can be populated by the imported file.
+		FbxScene* lScene = FbxScene::Create(lSdkManager, "myScene");
+
+		// Import the contents of the file into the scene.
+		lImporter->Import(lScene);
+
+		// The file is imported, so get rid of the importer.
+		lImporter->Destroy();
+
+		return lScene;
+	}
+	void ProcessFbxMesh(FbxScene* _scene, std::vector<geometry::Vertex>& vertexList, std::vector<unsigned int>& indiciesList, float scale = 1.0f)
+	{
+		FbxNode* node = _scene->GetRootNode();
+		int childrenCount = node->GetChildCount();
+		
+		
+		////////////////////////////////////////////////////////////////////////////////
+		// Mesh/Vertices Stuff
+		////////////////////////////////////////////////////////////////////////////////
+
+		for (int child_index = 0; child_index < childrenCount; ++child_index)
+		{			
+			FbxNode* childNode = node->GetChild(child_index);
+			FbxMesh* fbxMesh = childNode->GetMesh();
+						   
+			if (fbxMesh != NULL)
+			{
+				// Get index count from mesh
+				int numVertices = fbxMesh->GetControlPointsCount();
+
+				// Resize the vertex vector to size of this mesh
+				vertexList.resize(numVertices);
+
+				//================= Process Vertices ===============
+				for (int j = 0; j < numVertices; j++)
+				{
+					FbxVector4 vert = fbxMesh->GetControlPointAt(j);
+					vertexList[j].pos.x = (float)vert.mData[0] / scale;
+					vertexList[j].pos.y = (float)vert.mData[1] / scale;
+					vertexList[j].pos.z = (float)vert.mData[2] / scale;						
+				}
+				
+				int numIndices = fbxMesh->GetPolygonVertexCount();
+
+				// No need to allocate int array, FBX does for us
+				int* indices = fbxMesh->GetPolygonVertices();
+
+				// Fill indiceList
+				indiciesList.resize(numIndices);
+				memcpy(indiciesList.data(), indices, numIndices * sizeof(int));
+
+				// Declare a new array for the second vertex array
+				// Note the size is numIndices not numVertices
+				std::vector<geometry::Vertex> vertexListExpanded;
+				vertexListExpanded.resize(numIndices);
+				
+				// align (expand) vertex array and set the normals
+				for (int j = 0; j < numIndices; j++)
+				{/**/
+					vertexListExpanded[j].pos.x = vertexList[indices[j]].pos.x;
+					vertexListExpanded[j].pos.y = vertexList[indices[j]].pos.y;
+					vertexListExpanded[j].pos.z = vertexList[indices[j]].pos.z;						
+				}
+
+				// make new indices to match the new vertex(2) array
+				std::vector<unsigned int> indicesList;
+				indicesList.resize(numIndices);
+
+				for (int j = 0; j < numIndices; j++)
+				{
+					indicesList[j] = j;
+				}
+				
+				// copy working data to the global SimpleMesh
+				indiciesList.assign(indicesList.begin(), indicesList.end());
+				vertexList.assign(vertexListExpanded.begin(), vertexListExpanded.end());				
+			}
+		}		
+	}
+	void CalculateMinMax(DirectX::XMFLOAT3& min, DirectX::XMFLOAT3& max, geometry::Vertex a, geometry::Vertex b, geometry::Vertex c)
+	{
+		float temp_min_x, temp_max_x, temp_min_y, temp_max_y, temp_min_z, temp_max_z;
+		temp_min_x = a.pos.x;
+		temp_max_x = a.pos.x;
+		temp_min_y = a.pos.y;
+		temp_max_y = a.pos.y;
+		temp_min_z = a.pos.z;
+		temp_max_z = a.pos.z;
+
+		if (b.pos.x < temp_min_x)
+			temp_min_x = b.pos.x;
+		else if (b.pos.x > temp_max_x)
+			temp_max_x = b.pos.x;
+		if (b.pos.y < temp_min_y)
+			temp_min_y = b.pos.y;
+		else if (b.pos.y > temp_max_y)
+			temp_max_y = b.pos.y;
+		if (b.pos.z < temp_min_z)
+			temp_min_z = b.pos.z;
+		else if (b.pos.z > temp_max_z)
+			temp_max_z = b.pos.z;
+
+		if (c.pos.x < temp_min_x)
+			temp_min_x = c.pos.x;
+		else if (c.pos.x > temp_max_x)
+			temp_max_x = c.pos.x;
+		if (c.pos.y < temp_min_y)
+			temp_min_y = c.pos.y;
+		else if (c.pos.y > temp_max_y)
+			temp_max_y = c.pos.y;
+		if (c.pos.z < temp_min_z)
+			temp_min_z = c.pos.z;
+		else if (c.pos.z > temp_max_z)
+			temp_max_z = c.pos.z;
+
+		min.x = temp_min_x;
+		min.y = temp_min_y;
+		min.z = temp_min_z;
+
+		max.x = temp_max_x;
+		max.y = temp_max_y;
+		max.z = temp_max_z;
+
+	}
+
+	void CalculateCentroid(DirectX::XMFLOAT3& cen, geometry::Vertex a, geometry::Vertex b, geometry::Vertex c)
+	{
+		cen.x = (a.pos.x + b.pos.x + c.pos.x) / 3.0f;
+		cen.y = (a.pos.y + b.pos.y + c.pos.y) / 3.0f;
+		cen.z = (a.pos.z + b.pos.z + c.pos.z) / 3.0f;
+	}
+
+	void CreateTriangleList(std::vector<geometry::Triangle>& tri_list, std::vector<geometry::Vertex> vertexList, std::vector<unsigned int> indiciesList)
+	{
+		std::vector<geometry::Triangle> tris;
+		for (int index = 0; index < indiciesList.size(); index += 3)
+		{
+			geometry::Triangle t;
+			t.v1 = vertexList[indiciesList[index]];
+			t.v2 = vertexList[indiciesList[index + 1]];
+			t.v3 = vertexList[indiciesList[index + 2]];
+			CalculateMinMax(t.min, t.max, t.v1, t.v2, t.v3);
+			CalculateCentroid(t.centroid, t.v1, t.v2, t.v3);
+			tris.push_back(t);
+		}
+		tri_list.assign(tris.begin(), tris.end());
+	}
+
+	void CreateNavMesh(std::vector<geometry::Cell>& nav_mesh, std::vector<geometry::Triangle> tri_list)
+	{
+		std::vector<geometry::Cell> cell_list;
+
+		for (int i = 0; i < tri_list.size(); ++i)
+		{
+			geometry::Cell c;
+			c.tri = tri_list[i];
+			cell_list.push_back(c);
+		}
+
+		for (int cell_index = 0; cell_index < cell_list.size(); ++cell_index)
+		{
+			for (int tri_index = 0; tri_index < cell_list.size(); ++tri_index)
+			{
+				if (cell_index != tri_index)
+				{
+					//if vertex 1 matches with vertex 1
+					if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v1.pos.z)
+					{
+						if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v2.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v3.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v3.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v2.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+
+					}
+					//if vertex 2 matches with vertex 1
+					if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v1.pos.z)
+					{
+						if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v2.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v3.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v3.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v2.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+
+					}
+					//if vertex 3 matches with vertex 1
+					if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v1.pos.z)
+					{
+						if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v2.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v3.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v3.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v2.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+
+					}
+
+					//if vertex 1 matches with vertex 2
+					if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v2.pos.z)
+					{
+						if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v1.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v3.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v3.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v1.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+
+					}
+					//if vertex 2 matches with vertex 2
+					if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v2.pos.z)
+					{
+						if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v1.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v3.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v3.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v1.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+
+					}
+					//if vertex 3 matches with vertex 2
+					if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v2.pos.z)
+					{
+						if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v1.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v3.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v3.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v1.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+
+					}
+					
+					//if vertex 1 matches with vertex 3
+					if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v3.pos.z)
+					{
+						if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v2.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v1.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v1.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v2.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+
+					}
+					//if vertex 2 matches with vertex 3
+					if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v3.pos.z)
+					{
+						if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v2.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v1.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v1.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v2.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+
+					}
+					//if vertex 3 matches with vertex 3
+					if (cell_list[cell_index].tri.v3.pos.x == cell_list[tri_index].tri.v3.pos.x && cell_list[cell_index].tri.v3.pos.y == cell_list[tri_index].tri.v3.pos.y && cell_list[cell_index].tri.v3.pos.z == cell_list[tri_index].tri.v3.pos.z)
+					{
+						if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v2.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v2.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v2.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v2.pos.z == cell_list[tri_index].tri.v1.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v1.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v1.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v1.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+						else if (cell_list[cell_index].tri.v1.pos.x == cell_list[tri_index].tri.v2.pos.x && cell_list[cell_index].tri.v1.pos.y == cell_list[tri_index].tri.v2.pos.y && cell_list[cell_index].tri.v1.pos.z == cell_list[tri_index].tri.v2.pos.z)
+						{
+							cell_list[cell_index].connections.push_back(tri_index);
+							continue;
+						}
+
+					}
+				}
+			}
+		}
+
+		nav_mesh.assign(cell_list.begin(), cell_list.end());
+		for (int i = 0; i < cell_list.size(); ++i)
+		{
+			while (cell_list[i].connections.size() != 3)
+				cell_list[i].connections.push_back(-1);
+			nav_mesh[i].connections.assign(cell_list[i].connections.begin(), cell_list[i].connections.end());
+			
+		}
+	}
+};
+
+int main(int ac, char** av)
+{
+	FbxLoader fbx;
+	std::cout << "Type name of fbx file to be converted: ";
+	std::string filename;
+
+	std::getline(std::cin, filename);
+
+	
+	std::string passFileName(filename);
+	std::string finalFileName(filename);
+	passFileName.append(".fbx");
+	passFileName.insert(0, "assets/terrain/");
+
+	finalFileName.append("_NavMesh.bin");
+
+	std::vector<geometry::Vertex> v;
+	std::vector<unsigned int> i;
+	std::vector<geometry::Triangle> t;
+	std::vector<geometry::Cell> m;
+
+	fbx.ProcessFbxMesh(fbx.LoadFileIntoScene(passFileName.c_str()), v, i);
+	fbx.CreateTriangleList(t, v, i);
+	fbx.CreateNavMesh(m, t);
+	std::ofstream file(finalFileName.data(), std::ios::trunc | std::ios::binary | std::ios::out);
+	assert(file.is_open());
+	uint32_t index_count = (uint32_t)t.size();
+	
+	file.write((const char*)&index_count, sizeof(uint32_t));
+	for (int i = 0; i < m.size(); ++i)
+	{
+		file.write((const char*)&m[i], sizeof(geometry::Cell));
+		file.write((const char*)&m[i].connections[0], sizeof(int) * 3);
+	}
+		
+			
+		
+	file.close();
+
+	////////////////////////////////////////////////////////////////////////
+	//This is test to see if data is properly stored 
+	///////////////////////////////////////////////////////////////////////
+	uint32_t tri_count;
+	std::vector<geometry::Cell> cells;
+
+	std::ifstream file12("levelTerrain1_NavMesh.bin", std::ios::in | std::ios::binary);
+	if (file12.is_open())
+	{
+		
+
+		file12.read((char*)&tri_count, sizeof(uint32_t));
+
+		cells.resize(tri_count);
+		for (int i = 0; i < tri_count; ++i)
+		{
+			file12.read((char*)&cells[i], sizeof(geometry::Cell));
+			cells[i].connections.resize(3);
+			file12.read((char*)&cells[i].connections[0], sizeof(int) * 3);
+		}
+		
+
+		file12.close();
+	}
+	///////////////////////////////////////////////////////////////////////
+}
